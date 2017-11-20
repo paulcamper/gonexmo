@@ -5,8 +5,7 @@ import (
 	"time"
 )
 
-func testSend(t *testing.T) *VerifyMessageResponse {
-	time.Sleep(1 * time.Second) // Sleep 1 second due to API limitation
+func ensureClient(t *testing.T) *Client {
 	if TEST_PHONE_NUMBER == "" {
 		t.Fatal("No test phone number specified. Please set NEXMO_NUM")
 	}
@@ -14,6 +13,12 @@ func testSend(t *testing.T) *VerifyMessageResponse {
 	if err != nil {
 		t.Error("Failed to create Client with error:", err)
 	}
+	return client
+}
+
+func testSend(t *testing.T) *VerifyMessageResponse {
+	time.Sleep(1 * time.Second) // Sleep 1 second due to API limitation
+	client := ensureClient(t)
 
 	message := &VerifyMessageRequest{
 		Number:   TEST_PHONE_NUMBER,
@@ -39,13 +44,8 @@ func TestSendCheck(t *testing.T) {
 	sendResponse := testSend(t)
 
 	time.Sleep(1 * time.Second) // Sleep 1 second due to API limitation
-	if TEST_PHONE_NUMBER == "" {
-		t.Fatal("No test phone number specified. Please set NEXMO_NUM")
-	}
-	client, err := NewClientFromAPI(API_KEY, API_SECRET)
-	if err != nil {
-		t.Error("Failed to create Client with error:", err)
-	}
+
+	client := ensureClient(t)
 
 	message := &VerifyCheckRequest{
 		RequestID: sendResponse.RequestID,
@@ -65,13 +65,8 @@ func TestSendSearch(t *testing.T) {
 	sendResponse := testSend(t)
 
 	time.Sleep(1 * time.Second) // Sleep 1 second due to API limitation
-	if TEST_PHONE_NUMBER == "" {
-		t.Fatal("No test phone number specified. Please set NEXMO_NUM")
-	}
-	client, err := NewClientFromAPI(API_KEY, API_SECRET)
-	if err != nil {
-		t.Error("Failed to create Client with error:", err)
-	}
+
+	client := ensureClient(t)
 
 	message := &VerifySearchRequest{
 		RequestID: sendResponse.RequestID,
@@ -83,4 +78,42 @@ func TestSendSearch(t *testing.T) {
 	}
 
 	t.Logf("Sent Verification SMS, response was: %#v\n", messageResponse)
+}
+
+// TestControl checks both CmdCancel and CmdTriggerNextEvent event.
+// This test causes 30 second sleep for cancel to be properly done.
+func TestControl(t *testing.T) {
+	client := ensureClient(t)
+
+	testCases := map[string]struct {
+		cmd     Cmd
+		timeout time.Duration
+	}{
+		"cancel": {
+			cmd:     CmdCancel,
+			timeout: 30 * time.Second,
+		},
+		"trigger_next_event": {
+			cmd: CmdTriggerNextEvent,
+		},
+	}
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			sendResp := testSend(t)
+
+			time.Sleep(tc.timeout)
+
+			req := &VerifyControlRequest{
+				RequestID: sendResp.RequestID,
+				Cmd:       tc.cmd,
+			}
+			controlResp, err := client.Verify.Control(req)
+			if err != nil {
+				t.Fatal("Failed to send a verification control with error:", err)
+			}
+			if controlResp.Status != ResponseSuccess {
+				t.Errorf("Control status is not success. Got=%s. Error text=%s", controlResp.Status, controlResp.ErrorText)
+			}
+		})
+	}
 }
